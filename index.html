@@ -227,13 +227,38 @@
       font-size: 0.82rem; font-weight: 600; transition: all 0.15s; text-align: center;
     }
     .winner-btn.selected { background: var(--yellow); color: #1a1100; border-color: var(--yellow); }
-    .ending-row { display: flex; gap: 5px; flex-wrap: wrap; margin: 7px 0 4px; }
+    .ending-row { display: flex; gap: 5px; flex-wrap: wrap; margin: 7px 0 4px; justify-content: center; }
     .ending-btn {
       padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border);
       background: rgba(255,255,255,0.05); color: var(--muted); cursor: pointer;
       font-size: 0.75rem; transition: all 0.15s;
     }
     .ending-btn.selected { background: var(--blue); color: #fff; border-color: var(--blue); }
+    /* KO team selector (inline with score inputs) */
+    .ko-team-sel {
+      flex: 1; font-size: 0.82rem; font-weight: 600; line-height: 1.35;
+      padding: 7px 10px; border-radius: 8px; border: 1px solid var(--border);
+      background: rgba(255,255,255,0.04); color: var(--muted);
+      cursor: pointer; transition: all 0.15s; text-align: left;
+    }
+    .ko-team-sel.away { text-align: right; }
+    .ko-team-sel.selected {
+      background: rgba(244,196,48,0.12); color: var(--yellow);
+      border-color: rgba(244,196,48,0.45); font-weight: 700;
+    }
+    /* Save button states */
+    .btn-save-pending {
+      background: rgba(74,158,255,0.18); color: #6ab0ff;
+      border: 1px solid rgba(74,158,255,0.4); border-radius: 8px;
+      padding: 7px 22px; font-size: 0.83rem; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
+    .btn-save-pending:hover { background: rgba(74,158,255,0.28); }
+    .btn-save-done {
+      background: var(--green); color: #fff; border: 1px solid var(--green);
+      border-radius: 8px; padding: 7px 22px; font-size: 0.83rem; font-weight: 600;
+      cursor: pointer; transition: all 0.15s;
+    }
 
     /* ── STATS ── */
     .stats-row { display: flex; justify-content: space-around; text-align: center; }
@@ -1518,43 +1543,50 @@ function renderKO() {
         badges.push(`<span class="badge badge-gray">Resultado: ${res.winner} (${endingLbl[res.endingType]||res.endingType}) ${res.score||''}</span>`);
       }
 
-      html += `<div class="match-card ${cardCls}">
-        <div class="match-teams">
-          <span class="team">${flag(homeT)} ${homeT}</span>
-          <span class="match-vs">×</span>
-          <span class="team away">${awayT} ${flag(awayT)}</span>
-        </div>`;
+      html += `<div class="match-card ${cardCls}">`;
 
       if (!locked) {
-        const endOpts = [{v:'normal',l:'Tempo normal'},{v:'extra',l:'Prorrogação'},{v:'penalties',l:'Pênaltis'}];
-        html += `<div style="margin-top:8px">
-          <div style="font-size:0.75rem;color:var(--muted);margin-bottom:5px">Vencedor:</div>
-          <div class="winner-row">
-            <button class="winner-btn ${bWinner===homeT?'selected':''}" onclick="koSetWinner('${mid}','${homeT}')">${flag(homeT)} ${homeT}</button>
-            <button class="winner-btn ${bWinner===awayT?'selected':''}" onclick="koSetWinner('${mid}','${awayT}')">${flag(awayT)} ${awayT}</button>
+        const endOpts  = [{v:'normal',l:'Tempo normal'},{v:'extra',l:'Prorrogação'},{v:'penalties',l:'Pênaltis'}];
+        const needsSave = koPending[mid] !== undefined || !saved;
+        const scoreH    = bScore.split('-')[0] || '';
+        const scoreA    = bScore.split('-')[1] || '';
+        html += `
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+            <button class="ko-team-sel ${bWinner===homeT?'selected':''}" onclick="koSetWinner('${mid}','${homeT}')">${flag(homeT)} ${homeT}</button>
+            <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
+              <input type="number" class="s-inp" min="0" max="30" placeholder="–"
+                value="${scoreH}" id="koh_${mid}" oninput="koSetScore('${mid}')">
+              <span class="s-sep">×</span>
+              <input type="number" class="s-inp" min="0" max="30" placeholder="–"
+                value="${scoreA}" id="koa_${mid}" oninput="koSetScore('${mid}')">
+            </div>
+            <button class="ko-team-sel away ${bWinner===awayT?'selected':''}" onclick="koSetWinner('${mid}','${awayT}')">${awayT} ${flag(awayT)}</button>
           </div>
-          <div style="font-size:0.75rem;color:var(--muted);margin:8px 0 4px">Desfecho:</div>
           <div class="ending-row">
             ${endOpts.map(o=>`<button class="ending-btn ${bEnding===o.v?'selected':''}" onclick="koSetEnding('${mid}','${o.v}')">${o.l}</button>`).join('')}
           </div>
-          <div style="font-size:0.75rem;color:var(--muted);margin:8px 0 4px">Placar ${bEnding==='penalties'?'(cobranças, ex: 5-3)':bEnding==='extra'?'(prorrogação)':'(tempo normal)'}:</div>
-          <div class="score-row">
-            <input type="number" class="s-inp" min="0" max="30" placeholder="–"
-              value="${bScore.split('-')[0]||''}" id="koh_${mid}" oninput="koSetScore('${mid}')">
-            <span class="s-sep">×</span>
-            <input type="number" class="s-inp" min="0" max="30" placeholder="–"
-              value="${bScore.split('-')[1]||''}" id="koa_${mid}" oninput="koSetScore('${mid}')">
-            <button class="btn btn-sm btn-green" style="margin-left:8px" onclick="saveKOBet('${mid}')">✓ Salvar</button>
-          </div>
-        </div>`;
+          ${bEnding==='penalties'?`<div style="font-size:0.7rem;color:var(--muted);text-align:center;margin-top:2px">(placar em cobranças, ex: 5-3)</div>`:''}
+          <div style="text-align:center;margin-top:10px">
+            ${needsSave
+              ? `<button class="btn-save-pending" onclick="saveKOBet('${mid}')">💾 Salvar</button>`
+              : `<button class="btn-save-done" onclick="saveKOBet('${mid}')">✓ Salvo</button>`}
+          </div>`;
       } else {
-        html += bet
-          ? `<div style="margin-top:6px;font-size:0.82rem;color:var(--muted)">
-              Aposta: <strong style="color:var(--text)">${flag(bet.winner)} ${bet.winner}</strong> ·
-              ${endingLbl[bet.endingType]||bet.endingType} ${bet.score?'· '+bet.score:''}
-             </div>`
-          : `<div style="margin-top:6px;font-size:0.8rem;color:var(--muted)">Sem aposta registrada</div>`;
+        const scoreH = bet?.score?.split('-')[0] ?? '—';
+        const scoreA = bet?.score?.split('-')[1] ?? '—';
+        html += `<div class="match-teams">
+          <span class="team" style="${bet?.winner===homeT?'color:var(--yellow)':''}">${flag(homeT)} ${homeT}</span>
+          <div style="display:flex;flex-direction:column;align-items:center;gap:3px">
+            <div class="bet-display ${!bet?'empty':''}" style="min-width:64px;text-align:center">
+              ${bet?.score ? `${scoreH} – ${scoreA}` : '—'}
+            </div>
+            ${bet?`<div style="font-size:0.68rem;color:var(--muted)">${endingLbl[bet.endingType]||'—'}</div>`:''}
+          </div>
+          <span class="team away" style="${bet?.winner===awayT?'color:var(--yellow)':''}">${awayT} ${flag(awayT)}</span>
+        </div>`;
+        if (!bet) html += `<div style="text-align:center;font-size:0.8rem;color:var(--muted);margin-top:4px">Sem aposta registrada</div>`;
       }
+
       if (badges.length) html += `<div class="match-badges">${badges.join('')}</div>`;
       html += `</div>`;
     }
@@ -1590,7 +1622,7 @@ function saveKOBet(mid) {
   if (!merged.winner)    { toast('Selecione o vencedor primeiro'); return; }
   if (!merged.endingType) merged.endingType = 'normal';
   db.ref(`bets/${currentUser.id}/knockout/${mid}`).set(merged)
-    .then(() => { delete koPending[mid]; toast('✓ Aposta salva!'); })
+    .then(() => { delete koPending[mid]; renderKO(); toast('✓ Aposta salva!'); })
     .catch(e => toast('Erro: ' + e.message));
 }
 
