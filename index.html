@@ -538,6 +538,7 @@
       Visualize as apostas de todos os participantes. Na aba <strong style="color:var(--text)">⚽ Grupos</strong>, clique em <em>👁 Ver apostas</em> em qualquer jogo já encerrado para comparar os palpites lado a lado.
     </div>
     <div class="participant-tabs" id="bets-ptabs"></div>
+    <div id="bets-phase-tabs" style="display:flex;gap:8px;margin:10px 0 4px"></div>
     <div id="bets-pdf-row"></div>
     <div class="group-tabs" id="bets-gtabs"></div>
     <div id="bets-content"></div>
@@ -797,7 +798,7 @@ let phase = 'groups';
 // koDeadline removido — prazos são por rodada em KO_DEADLINES
 let allBets = {}, allResults = {}, participants = {}, koMatches = {};
 let curGroup = 'A', curAdmGroup = 'A';
-let curBetsUser = null, curBetsGroup = 'A';
+let curBetsUser = null, curBetsGroup = 'A', curBetsPhase = 'groups';
 let pendingGrp = {};
 let _pendingBootFn = null; // chamado após fechar o modal de código
 
@@ -1525,15 +1526,14 @@ function renderKO() {
         </div>`;
 
       if (!locked) {
+        const endOpts = [{v:'normal',l:'Tempo normal'},{v:'extra',l:'Prorrogação'},{v:'penalties',l:'Pênaltis'}];
         html += `<div style="margin-top:8px">
           <div style="font-size:0.75rem;color:var(--muted);margin-bottom:5px">Vencedor:</div>
           <div class="winner-row">
             <button class="winner-btn ${bWinner===homeT?'selected':''}" onclick="koSetWinner('${mid}','${homeT}')">${flag(homeT)} ${homeT}</button>
             <button class="winner-btn ${bWinner===awayT?'selected':''}" onclick="koSetWinner('${mid}','${awayT}')">${flag(awayT)} ${awayT}</button>
-          </div>`;
-        if (bWinner) {
-          const endOpts = [{v:'normal',l:'Tempo normal'},{v:'extra',l:'Prorrogação'},{v:'penalties',l:'Pênaltis'}];
-          html += `<div style="font-size:0.75rem;color:var(--muted);margin:8px 0 4px">Desfecho:</div>
+          </div>
+          <div style="font-size:0.75rem;color:var(--muted);margin:8px 0 4px">Desfecho:</div>
           <div class="ending-row">
             ${endOpts.map(o=>`<button class="ending-btn ${bEnding===o.v?'selected':''}" onclick="koSetEnding('${mid}','${o.v}')">${o.l}</button>`).join('')}
           </div>
@@ -1545,9 +1545,8 @@ function renderKO() {
             <input type="number" class="s-inp" min="0" max="30" placeholder="–"
               value="${bScore.split('-')[1]||''}" id="koa_${mid}" oninput="koSetScore('${mid}')">
             <button class="btn btn-sm btn-green" style="margin-left:8px" onclick="saveKOBet('${mid}')">✓ Salvar</button>
-          </div>`;
-        }
-        html += `</div>`;
+          </div>
+        </div>`;
       } else {
         html += bet
           ? `<div style="margin-top:6px;font-size:0.82rem;color:var(--muted)">
@@ -1599,10 +1598,11 @@ function saveKOBet(mid) {
 // APOSTAS (TRANSPARÊNCIA)
 // ════════════════════════════════════════════════════════════
 function renderBets(reset = true) {
-  if (reset) { curBetsUser = null; curBetsGroup = 'A'; }
+  if (reset) { curBetsUser = null; curBetsGroup = 'A'; curBetsPhase = 'groups'; }
   const uids = Object.keys(participants);
   if (!uids.length) {
     document.getElementById('bets-ptabs').innerHTML = '';
+    document.getElementById('bets-phase-tabs').innerHTML = '';
     document.getElementById('bets-gtabs').innerHTML = '';
     document.getElementById('bets-content').innerHTML =
       `<div class="card" style="text-align:center;color:var(--muted);padding:32px">Nenhum participante ainda</div>`;
@@ -1610,112 +1610,211 @@ function renderBets(reset = true) {
   }
   if (!curBetsUser || !participants[curBetsUser]) curBetsUser = uids[0];
 
+  // Abas de participantes
   document.getElementById('bets-ptabs').innerHTML = uids.map(uid => {
     const isMe = uid === currentUser.id ? ' (você)' : '';
     return `<button class="ptab ${uid===curBetsUser?'active':''}" onclick="selBetsUser('${uid}')">${participants[uid].name}${isMe}</button>`;
   }).join('');
 
-  const theirBets    = (allBets[curBetsUser] || {}).groups || {};
-  const totalFilled  = Object.keys(theirBets).length;
-  const personName   = participants[curBetsUser]?.name || 'Este participante';
+  // Sub-abas de fase
+  document.getElementById('bets-phase-tabs').innerHTML = `
+    <button class="btn btn-sm ${curBetsPhase==='groups'?'btn-green':'btn-secondary'}" onclick="selBetsPhase('groups')">⚽ Fase de Grupos</button>
+    <button class="btn btn-sm ${curBetsPhase==='knockout'?'btn-green':'btn-secondary'}" onclick="selBetsPhase('knockout')">🥊 Eliminatórias</button>`;
 
-  // Botão de PDF — só exibe quando há apostas
-  document.getElementById('bets-pdf-row').innerHTML = totalFilled > 0
-    ? `<button class="btn btn-secondary btn-block" style="margin-bottom:12px"
-         onclick="printUserBets('${curBetsUser}')">
-         🖨️ Baixar apostas de ${personName} (PDF)
-       </button>`
-    : '';
+  const personName = participants[curBetsUser]?.name || 'Este participante';
 
-  // Se não há nenhuma aposta cadastrada, mostra aviso e oculta as abas de grupo
-  if (totalFilled === 0) {
-    document.getElementById('bets-gtabs').innerHTML = '';
-    document.getElementById('bets-content').innerHTML = `
-      <div style="background:rgba(192,96,16,0.12);border:1px solid rgba(192,96,16,0.4);border-radius:12px;padding:28px;text-align:center">
-        <div style="font-size:2.2rem;margin-bottom:10px">📋</div>
-        <div style="font-weight:700;font-size:1rem;margin-bottom:8px">${personName} ainda não cadastrou apostas</div>
-        <div style="color:var(--muted);font-size:0.85rem;line-height:1.6">
-          As apostas da fase de grupos ficam disponíveis para visualização assim que o participante salvar pelo menos um palpite.
-        </div>
-      </div>`;
-    return;
-  }
+  if (curBetsPhase === 'groups') {
+    // ── GRUPOS ──────────────────────────────────────────────
+    const theirBets   = (allBets[curBetsUser] || {}).groups || {};
+    const totalFilled = Object.keys(theirBets).length;
 
-  document.getElementById('bets-gtabs').innerHTML = Object.keys(GROUPS).map(g => {
-    const done = Object.keys(GM).filter(k => k.startsWith(`G_${g}_`) && theirBets[k] !== undefined).length === 6;
-    return `<button class="gtab ${g===curBetsGroup?'active':''} ${done?'done':''}" onclick="selBetsGroup('${g}')">${g}${done?' ✓':''}</button>`;
-  }).join('');
+    document.getElementById('bets-pdf-row').innerHTML = totalFilled > 0
+      ? `<button class="btn btn-secondary btn-block" style="margin-bottom:12px"
+           onclick="printUserBets('${curBetsUser}')">
+           🖨️ Baixar apostas de ${personName} (PDF)
+         </button>`
+      : '';
 
-  const results = allResults.groups || {};
-  const matches = Object.entries(GM).filter(([k]) => k.startsWith(`G_${curBetsGroup}_`));
-
-  const allUids = Object.keys(participants);
-  document.getElementById('bets-content').innerHTML = matches.map(([mid, m]) => {
-    const bet = theirBets[mid];
-    const res = results[mid];
-    const pts = res ? scoreGroup(bet, res) : null;
-    let cardCls = '';
-    if (pts !== null) cardCls = pts===3?'pts-score':pts===1?'pts-winner':bet!==undefined?'pts-miss':'';
-    let scoreBadge = '';
-    let resultBadge = '';
-    if (pts !== null) {
-      if      (pts===3) scoreBadge = `<span class="badge badge-gold">⭐ +3</span>`;
-      else if (pts===1) scoreBadge = `<span class="badge badge-blue">✓ +1</span>`;
-      else if (bet)     scoreBadge = `<span class="badge badge-red">✗</span>`;
-      resultBadge = `<span class="badge badge-gray">Resultado: ${res}</span>`;
+    if (totalFilled === 0) {
+      document.getElementById('bets-gtabs').innerHTML = '';
+      document.getElementById('bets-content').innerHTML = `
+        <div style="background:rgba(192,96,16,0.12);border:1px solid rgba(192,96,16,0.4);border-radius:12px;padding:28px;text-align:center">
+          <div style="font-size:2.2rem;margin-bottom:10px">📋</div>
+          <div style="font-weight:700;font-size:1rem;margin-bottom:8px">${personName} ainda não cadastrou apostas</div>
+          <div style="color:var(--muted);font-size:0.85rem;line-height:1.6">
+            As apostas da fase de grupos ficam disponíveis para visualização assim que o participante salvar pelo menos um palpite.
+          </div>
+        </div>`;
+      return;
     }
 
-    // Distribuição de votos entre todos os participantes
-    let homeV = 0, drawV = 0, awayV = 0;
-    const homeNames = [], drawNames = [], awayNames = [];
-    allUids.forEach(uid => {
-      const b = ((allBets[uid] || {}).groups || {})[mid];
-      if (b === undefined || b === null) return;
-      const w = grpWinner(b);
-      const name = participants[uid]?.name || uid;
-      if (w === 'H') { homeV++; homeNames.push({name, bet: b}); }
-      else if (w === 'D') { drawV++; drawNames.push({name, bet: b}); }
-      else if (w === 'A') { awayV++; awayNames.push({name, bet: b}); }
-    });
-    const nameList = arr => arr.map(e => `<div>${e.name} <span style="opacity:0.6">(${e.bet})</span></div>`).join('');
-    const totalV = homeV + drawV + awayV;
-    const pct = n => totalV ? Math.round(n / totalV * 100) : 0;
-    const voteItem = (type, count, names, cls) => {
-      if (count === 0) return `<span class="${cls}">${count}<span class="v-pct">0%</span></span>`;
-      return `<span class="${cls} v-clickable" onclick="toggleVoteNames('${mid}','${type}')">
-        ${count}<span class="v-pct">${pct(count)}%</span><span class="v-caret" id="vc_${mid}_${type}">▾</span>
-      </span>`;
-    };
-    const voteBar = totalV > 0 ? `
-      <div class="vote-bar">
-        ${voteItem('H', homeV, homeNames, 'v-home')}
-        ${voteItem('D', drawV, drawNames, 'v-draw')}
-        ${voteItem('A', awayV, awayNames, 'v-away')}
-      </div>
-      <div id="vnp_${mid}" class="vote-names-panel" style="display:none">
-        <div id="vn_${mid}_H" style="display:none;color:#4a9eff;text-align:left">${nameList(homeNames)}</div>
-        <div id="vn_${mid}_D" style="display:none;color:var(--muted);text-align:center">${nameList(drawNames)}</div>
-        <div id="vn_${mid}_A" style="display:none;color:#ff7a7a;text-align:right">${nameList(awayNames)}</div>
-      </div>` : '';
+    document.getElementById('bets-gtabs').innerHTML = Object.keys(GROUPS).map(g => {
+      const done = Object.keys(GM).filter(k => k.startsWith(`G_${g}_`) && theirBets[k] !== undefined).length === 6;
+      return `<button class="gtab ${g===curBetsGroup?'active':''} ${done?'done':''}" onclick="selBetsGroup('${g}')">${g}${done?' ✓':''}</button>`;
+    }).join('');
 
-    return `<div class="match-card ${cardCls}">
-      <div class="match-teams">
-        <span class="team">${flag(m.home)} ${m.home}</span>
-        <span class="match-vs">×</span>
-        <span class="team away">${m.away} ${flag(m.away)}</span>
-      </div>
-      <div style="display:flex;flex-direction:column;align-items:center;margin-top:6px;gap:5px">
-        <div class="bet-display ${bet===undefined?'empty':''}">${bet||'—'}</div>
-        ${resultBadge ? `<div style="display:flex;justify-content:center">${resultBadge}</div>` : ''}
-        ${scoreBadge  ? `<div style="display:flex;justify-content:center">${scoreBadge}</div>`  : ''}
-      </div>
-      ${voteBar}
-    </div>`;
-  }).join('') || `<div style="text-align:center;color:var(--muted);padding:24px">Nenhuma aposta neste grupo</div>`;
+    const results = allResults.groups || {};
+    const matches = Object.entries(GM).filter(([k]) => k.startsWith(`G_${curBetsGroup}_`));
+    const allUids = Object.keys(participants);
+
+    document.getElementById('bets-content').innerHTML = matches.map(([mid, m]) => {
+      const bet = theirBets[mid];
+      const res = results[mid];
+      const pts = res ? scoreGroup(bet, res) : null;
+      let cardCls = '';
+      if (pts !== null) cardCls = pts===3?'pts-score':pts===1?'pts-winner':bet!==undefined?'pts-miss':'';
+      let scoreBadge = '', resultBadge = '';
+      if (pts !== null) {
+        if      (pts===3) scoreBadge = `<span class="badge badge-gold">⭐ +3</span>`;
+        else if (pts===1) scoreBadge = `<span class="badge badge-blue">✓ +1</span>`;
+        else if (bet)     scoreBadge = `<span class="badge badge-red">✗</span>`;
+        resultBadge = `<span class="badge badge-gray">Resultado: ${res}</span>`;
+      }
+      let homeV = 0, drawV = 0, awayV = 0;
+      const homeNames = [], drawNames = [], awayNames = [];
+      allUids.forEach(uid => {
+        const b = ((allBets[uid] || {}).groups || {})[mid];
+        if (b === undefined || b === null) return;
+        const w = grpWinner(b);
+        const name = participants[uid]?.name || uid;
+        if (w === 'H') { homeV++; homeNames.push({name, bet: b}); }
+        else if (w === 'D') { drawV++; drawNames.push({name, bet: b}); }
+        else if (w === 'A') { awayV++; awayNames.push({name, bet: b}); }
+      });
+      const nameList = arr => arr.map(e => `<div>${e.name} <span style="opacity:0.6">(${e.bet})</span></div>`).join('');
+      const totalV = homeV + drawV + awayV;
+      const pct = n => totalV ? Math.round(n / totalV * 100) : 0;
+      const voteItem = (type, count, names, cls) => {
+        if (count === 0) return `<span class="${cls}">${count}<span class="v-pct">0%</span></span>`;
+        return `<span class="${cls} v-clickable" onclick="toggleVoteNames('${mid}','${type}')">
+          ${count}<span class="v-pct">${pct(count)}%</span><span class="v-caret" id="vc_${mid}_${type}">▾</span>
+        </span>`;
+      };
+      const voteBar = totalV > 0 ? `
+        <div class="vote-bar">
+          ${voteItem('H', homeV, homeNames, 'v-home')}
+          ${voteItem('D', drawV, drawNames, 'v-draw')}
+          ${voteItem('A', awayV, awayNames, 'v-away')}
+        </div>
+        <div id="vnp_${mid}" class="vote-names-panel" style="display:none">
+          <div id="vn_${mid}_H" style="display:none;color:#4a9eff;text-align:left">${nameList(homeNames)}</div>
+          <div id="vn_${mid}_D" style="display:none;color:var(--muted);text-align:center">${nameList(drawNames)}</div>
+          <div id="vn_${mid}_A" style="display:none;color:#ff7a7a;text-align:right">${nameList(awayNames)}</div>
+        </div>` : '';
+      return `<div class="match-card ${cardCls}">
+        <div class="match-teams">
+          <span class="team">${flag(m.home)} ${m.home}</span>
+          <span class="match-vs">×</span>
+          <span class="team away">${m.away} ${flag(m.away)}</span>
+        </div>
+        <div style="display:flex;flex-direction:column;align-items:center;margin-top:6px;gap:5px">
+          <div class="bet-display ${bet===undefined?'empty':''}">${bet||'—'}</div>
+          ${resultBadge ? `<div style="display:flex;justify-content:center">${resultBadge}</div>` : ''}
+          ${scoreBadge  ? `<div style="display:flex;justify-content:center">${scoreBadge}</div>`  : ''}
+        </div>
+        ${voteBar}
+      </div>`;
+    }).join('') || `<div style="text-align:center;color:var(--muted);padding:24px">Nenhuma aposta neste grupo</div>`;
+
+  } else {
+    // ── ELIMINATÓRIAS ────────────────────────────────────────
+    document.getElementById('bets-pdf-row').innerHTML = '';
+    document.getElementById('bets-gtabs').innerHTML = '';
+
+    const endingLbl = { normal:'T. normal', extra:'Prorrogação', penalties:'Pênaltis' };
+    const koRes  = allResults.knockout || {};
+    const koBets = (allBets[curBetsUser] || {}).knockout || {};
+    const allUids = Object.keys(participants);
+    let html = '';
+
+    KO_ROUNDS.forEach(round => {
+      let roundHtml = '';
+      for (let i = 1; i <= KO_COUNT[round]; i++) {
+        const mid = `${round}_${i}`;
+        const km  = koMatches[mid] || KO_MATCHES_DEFAULT[mid];
+        if (!km) continue;
+
+        const bet = koBets[mid];
+        const res = koRes[mid];
+        const pts = res && bet ? scoreKO(bet, res, round) : null;
+        const sMax = SCORING[round].score;
+        const sWin = SCORING[round].winner;
+
+        let cardCls = '';
+        if (pts !== null) cardCls = pts===sMax?'pts-score':pts===sWin?'pts-winner':bet?'pts-miss':'';
+
+        let scoreBadge = '', resultBadge = '';
+        if (pts !== null) {
+          if (pts===sMax)      scoreBadge = `<span class="badge badge-gold">⭐ +${pts}</span>`;
+          else if (pts===sWin) scoreBadge = `<span class="badge badge-blue">✓ +${pts}</span>`;
+          else if (bet)        scoreBadge = `<span class="badge badge-red">✗</span>`;
+        }
+        if (res) resultBadge = `<span class="badge badge-gray">Resultado: ${res.winner} (${endingLbl[res.endingType]||res.endingType})${res.score?' '+res.score:''}</span>`;
+
+        const betDisplay = bet
+          ? `<div style="text-align:center;margin-top:4px">
+               <div style="font-weight:700;color:var(--yellow)">${flag(bet.winner)} ${bet.winner}</div>
+               <div style="font-size:0.75rem;color:var(--muted)">${endingLbl[bet.endingType]||'—'}${bet.score?' · '+bet.score:''}</div>
+             </div>`
+          : `<div class="bet-display empty" style="margin-top:4px">—</div>`;
+
+        // Distribuição: quem apostou em cada time
+        const homeVoters = [], awayVoters = [];
+        allUids.forEach(uid => {
+          const b = ((allBets[uid] || {}).knockout || {})[mid];
+          if (!b) return;
+          const name = participants[uid]?.name || uid;
+          if (b.winner === km.home) homeVoters.push({name, bet: b});
+          else if (b.winner === km.away) awayVoters.push({name, bet: b});
+        });
+        const totalV = homeVoters.length + awayVoters.length;
+        const pct = n => totalV ? Math.round(n / totalV * 100) : 0;
+        const voterList = arr => arr.map(e =>
+          `<div>${e.name} <span style="opacity:0.6">(${endingLbl[e.bet.endingType]||''}${e.bet.score?' '+e.bet.score:''})</span></div>`
+        ).join('');
+        const vid = `ko_${mid}`;
+        const voteBar = totalV > 0 ? `
+          <div class="vote-bar">
+            ${homeVoters.length > 0
+              ? `<span class="v-home v-clickable" onclick="toggleVoteNames('${vid}','H')">${homeVoters.length}<span class="v-pct">${pct(homeVoters.length)}%</span><span class="v-caret" id="vc_${vid}_H">▾</span></span>`
+              : `<span class="v-home">${homeVoters.length}<span class="v-pct">0%</span></span>`}
+            <span class="v-draw">—</span>
+            ${awayVoters.length > 0
+              ? `<span class="v-away v-clickable" onclick="toggleVoteNames('${vid}','A')">${awayVoters.length}<span class="v-pct">${pct(awayVoters.length)}%</span><span class="v-caret" id="vc_${vid}_A">▾</span></span>`
+              : `<span class="v-away">${awayVoters.length}<span class="v-pct">0%</span></span>`}
+          </div>
+          <div id="vnp_${vid}" class="vote-names-panel" style="display:none">
+            <div id="vn_${vid}_H" style="display:none;color:#4a9eff;text-align:left">${voterList(homeVoters)}</div>
+            <div id="vn_${vid}_A" style="display:none;color:#ff7a7a;text-align:right">${voterList(awayVoters)}</div>
+          </div>` : '';
+
+        roundHtml += `<div class="match-card ${cardCls}">
+          <div class="match-teams">
+            <span class="team">${flag(km.home)} ${km.home}</span>
+            <span class="match-vs">×</span>
+            <span class="team away">${km.away} ${flag(km.away)}</span>
+          </div>
+          <div style="display:flex;flex-direction:column;align-items:center;margin-top:6px;gap:5px">
+            ${betDisplay}
+            ${resultBadge ? `<div style="display:flex;justify-content:center">${resultBadge}</div>` : ''}
+            ${scoreBadge  ? `<div style="display:flex;justify-content:center">${scoreBadge}</div>`  : ''}
+          </div>
+          ${voteBar}
+        </div>`;
+      }
+      if (roundHtml) {
+        html += `<div class="round-header" style="margin:16px 0 8px;font-size:0.8rem;color:var(--muted);text-align:center;letter-spacing:0.08em">── ${KO_LABELS[round]} ──</div>${roundHtml}`;
+      }
+    });
+
+    document.getElementById('bets-content').innerHTML = html ||
+      `<div style="text-align:center;color:var(--muted);padding:32px">Nenhuma aposta eliminatória registrada ainda</div>`;
+  }
 }
 
-function selBetsUser(uid) { curBetsUser = uid; renderBets(false); }
-function selBetsGroup(g)  { curBetsGroup = g;  renderBets(false); }
+function selBetsUser(uid)   { curBetsUser  = uid; renderBets(false); }
+function selBetsGroup(g)    { curBetsGroup = g;   renderBets(false); }
+function selBetsPhase(p)    { curBetsPhase = p;   renderBets(false); }
 
 function toggleVoteNames(mid, type) {
   const panel  = document.getElementById(`vnp_${mid}`);
