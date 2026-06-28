@@ -1147,48 +1147,83 @@ function renderRankingChart() {
   const el = document.getElementById('home-chart');
   if (!el) return;
 
-  const grpResults = allResults.groups || {};
+  const grpResults = allResults.groups   || {};
+  const koResults  = allResults.knockout || {};
   const uids = Object.keys(participants);
   if (uids.length === 0) { el.innerHTML = ''; return; }
 
-  // Dias de jogo únicos que têm ao menos um resultado registrado
+  // ── Fase de grupos: um ponto por dia com resultados ──────────
   const allDays = [...new Set(Object.values(MATCH_DATES))].sort();
-  const daysWithResults = allDays.filter(date =>
+  const grpDays = allDays.filter(date =>
     Object.entries(grpResults).some(([mid]) => MATCH_DATES[mid] === date)
   );
 
-  if (daysWithResults.length === 0) {
+  // ── Fase eliminatória: um ponto por rodada com resultados ────
+  const KO_SHORT = { r32:'16 Avos', r16:'Oitavas', qf:'Quartas', sf:'Semis', '3rd':'3° Lugar', final:'Final' };
+  const koRoundsWithRes = KO_ROUNDS.filter(round =>
+    [...Array(KO_COUNT[round])].some((_, i) => koResults[`${round}_${i+1}`])
+  );
+
+  // ── Timeline unificada ───────────────────────────────────────
+  const timeline = [
+    ...grpDays.map(d => {
+      const dt = new Date(d + 'T12:00:00');
+      return { label: `${dt.getDate()}/${dt.getMonth()+1}`, type: 'group', key: d };
+    }),
+    ...koRoundsWithRes.map(r => ({ label: KO_SHORT[r], type: 'ko', key: r }))
+  ];
+
+  if (timeline.length === 0) {
     el.innerHTML = '<div style="text-align:center;color:var(--muted);font-size:0.82rem;padding:16px 0">Nenhum resultado registrado ainda — o gráfico aparecerá após os primeiros jogos.</div>';
     return;
   }
 
-  // Snapshot de ranking acumulado para cada dia com resultado
-  const snapshots = daysWithResults.map(date => {
+  // ── Snapshots cumulativos ────────────────────────────────────
+  // Cada ponto mostra pontuação acumulada até aquele momento
+  const lastGrpDay = grpDays.length > 0 ? grpDays[grpDays.length - 1] : '';
+  const snapshots = timeline.map((point, idx) => {
+    const cutoffGrpDate = point.type === 'group' ? point.key : lastGrpDay;
+    const koRoundsUpTo  = timeline.slice(0, idx + 1).filter(p => p.type === 'ko').map(p => p.key);
+
     const ranked = uids.map(uid => {
       let total = 0, scores = 0;
-      const grpBets = (allBets[uid] || {}).groups || {};
+      const grpBets = (allBets[uid] || {}).groups   || {};
+      const koBets  = (allBets[uid] || {}).knockout || {};
+
+      // Pontos de grupos até a data de corte
       Object.entries(grpResults).forEach(([mid, res]) => {
-        if ((MATCH_DATES[mid] || '') > date) return;
+        if ((MATCH_DATES[mid] || '') > cutoffGrpDate) return;
         const p = scoreGroup(grpBets[mid], res);
-        total += p;
-        if (p === 3) scores++;
+        total += p; if (p === 3) scores++;
+      });
+      // Pontos KO das rodadas já exibidas
+      koRoundsUpTo.forEach(round => {
+        for (let i = 1; i <= KO_COUNT[round]; i++) {
+          const res = koResults[`${round}_${i}`];
+          if (!res) continue;
+          const p = scoreKO(koBets[`${round}_${i}`], res, round);
+          total += p; if (p === SCORING[round].score) scores++;
+        }
       });
       return { uid, total, scores };
     }).sort((a, b) => b.total - a.total || b.scores - a.scores);
 
     const positions = {};
     ranked.forEach((r, i) => { positions[r.uid] = i + 1; });
-    return { date, positions };
+    return { label: point.label, type: point.type, positions };
   });
 
   // Dimensões do canvas
-  const N   = uids.length;
-  const ptW = 50;            // largura por dia de jogo
+  const N    = uids.length;
+  const ptW  = 52;
   const padL = 30, padR = 28, padT = 18, padB = 30;
-  const chartW = daysWithResults.length * ptW;
+  const chartW = timeline.length * ptW;
   const chartH = Math.max(100, N * 22);
   const totalW = padL + chartW + padR;
   const totalH = padT + chartH + padB;
+
+  // Índice onde começa a fase KO (para separador visual)
+  const koStartIdx = grpDays.length;
 
   el.innerHTML = `
     <div style="overflow-x:auto;-webkit-overflow-scrolling:touch;margin:0 -4px">
@@ -1198,43 +1233,50 @@ function renderRankingChart() {
     <div style="display:flex;align-items:center;gap:14px;margin-top:8px;font-size:0.72rem;color:var(--muted);flex-wrap:wrap">
       <span><span style="display:inline-block;width:18px;height:2.5px;background:var(--yellow);vertical-align:middle;border-radius:2px;margin-right:4px"></span>Você</span>
       <span><span style="display:inline-block;width:18px;height:1px;background:rgba(255,255,255,0.25);vertical-align:middle;border-radius:2px;margin-right:4px"></span>Outros</span>
+      ${koRoundsWithRes.length > 0 ? `<span><span style="display:inline-block;width:18px;height:1px;border-top:1px dashed rgba(244,196,48,0.5);vertical-align:middle;margin-right:4px"></span>⚽ → 🥊</span>` : ''}
       <span style="margin-left:auto">1° = topo · ${N}° = base</span>
     </div>`;
 
   const canvas = document.getElementById('rank-chart-canvas');
   const ctx    = canvas.getContext('2d');
 
-  // Fundo sutil
   ctx.fillStyle = 'rgba(255,255,255,0.02)';
   ctx.fillRect(0, 0, totalW, totalH);
 
-  // Helper: posição Y para um ranking
   const yOf = pos => padT + ((pos - 1) / Math.max(N - 1, 1)) * chartH;
 
-  // Grid horizontal (uma linha por posição)
+  // Fundo KO em leve amarelo
+  if (koStartIdx < timeline.length) {
+    const koX = padL + koStartIdx * ptW;
+    ctx.fillStyle = 'rgba(244,196,48,0.03)';
+    ctx.fillRect(koX, padT, chartW - koStartIdx * ptW, chartH);
+    // Linha divisória grupos/KO
+    ctx.strokeStyle = 'rgba(244,196,48,0.25)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.beginPath(); ctx.moveTo(koX, padT); ctx.lineTo(koX, padT + chartH); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Grid horizontal
   for (let pos = 1; pos <= N; pos++) {
     const y = yOf(pos);
     ctx.strokeStyle = pos === 1 ? 'rgba(244,196,48,0.12)' : 'rgba(255,255,255,0.05)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([]);
+    ctx.lineWidth = 1; ctx.setLineDash([]);
     ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(padL + chartW, y); ctx.stroke();
-
-    // Rótulo do eixo Y
     ctx.fillStyle = pos === 1 ? 'rgba(244,196,48,0.7)' : 'rgba(255,255,255,0.25)';
     ctx.font = `${pos <= 3 ? '600' : '400'} 9px system-ui,sans-serif`;
     ctx.textAlign = 'right';
     ctx.fillText(`${pos}°`, padL - 5, y + 3);
   }
 
-  // Rótulos do eixo X (datas)
-  daysWithResults.forEach((date, i) => {
+  // Rótulos do eixo X
+  snapshots.forEach((snap, i) => {
     const x = padL + i * ptW + ptW / 2;
-    const d = new Date(date + 'T12:00:00');
-    const lbl = `${d.getDate()}/${d.getMonth() + 1}`;
-    ctx.fillStyle = 'rgba(255,255,255,0.3)';
-    ctx.font = '9px system-ui,sans-serif';
+    ctx.fillStyle = snap.type === 'ko' ? 'rgba(244,196,48,0.6)' : 'rgba(255,255,255,0.3)';
+    ctx.font = snap.type === 'ko' ? 'bold 8px system-ui,sans-serif' : '9px system-ui,sans-serif';
     ctx.textAlign = 'center';
-    ctx.fillText(lbl, x, totalH - 9);
+    ctx.fillText(snap.label, x, totalH - 9);
   });
 
   // Linhas dos outros participantes (primeiro, para ficarem atrás)
@@ -1334,13 +1376,13 @@ function renderRules() {
     <p style="font-size:0.82rem;color:var(--muted)"><strong style="color:var(--yellow)">325 pts máximos</strong> nas eliminatórias</p>
   </div>
   <div class="card rule-section">
-    <div class="card-title">⏱️ Prorrogação e Pênaltis</div>
+    <div class="card-title">⏱️ T. Regulamentar e Pênaltis</div>
     <div class="rule-note">
-      Ao apostar num jogo eliminatório, você escolhe:<br>
-      <strong>1. Vencedor</strong> — quem ganhar, independente do desfecho<br>
-      <strong>2. Desfecho</strong> — tempo normal, prorrogação ou pênaltis<br>
-      <strong>3. Placar</strong> — resultado da fase escolhida<br><br>
-      O <strong>placar exato</strong> exige acertar os três juntos.
+      Ao apostar num jogo eliminatório, você informa:<br>
+      <strong>1. Placar</strong> — o vencedor é inferido automaticamente (maior placar vence)<br>
+      <strong>2. Desfecho</strong> — <em>T. regulamentar</em> (cobre 90min e prorrogação) ou <em>Pênaltis</em><br><br>
+      Para <strong>Pênaltis</strong>: insira o placar da disputa de cobranças (ex: 5-3).<br><br>
+      O <strong>placar exato</strong> exige acertar o placar <em>e</em> o desfecho (pênaltis vs. não-pênaltis).
     </div>
   </div>
   <div class="card rule-section">
