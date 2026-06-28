@@ -470,7 +470,7 @@
       onmouseenter="showNavTip(this,'Registre seus palpites para os 72 jogos da fase de grupos')"
       onmouseleave="hideNavTip()">⚽ Grupos</button>
     <button id="nav-knockout" onclick="goTo('knockout')"
-      onmouseenter="showNavTip(this,'Aposte nas fases eliminatórias — da Rodada de 32 até a Final')"
+      onmouseenter="showNavTip(this,'Aposte nas fases eliminatórias — dos 16 Avos até a Final')"
       onmouseleave="hideNavTip()">🥊 Elim.</button>
     <button id="nav-bets"     onclick="goTo('bets')"
       onmouseenter="showNavTip(this,'Compare os palpites de todos — e veja os resultados reais dos jogos')"
@@ -562,16 +562,11 @@
       </div>
     </div>
     <div class="adm-section">
-      <h3>⏰ Prazo das Eliminatórias</h3>
-      <div style="font-size:0.82rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
-        Data/hora limite para os participantes salvarem apostas das eliminatórias. Após essa data, as apostas ficam bloqueadas automaticamente (mesmo com a fase ativa).
+      <h3>⏰ Prazos das Eliminatórias</h3>
+      <div style="font-size:0.8rem;color:var(--muted);margin-bottom:10px;line-height:1.5">
+        Apostas de cada rodada ficam bloqueadas automaticamente no horário do primeiro jogo da fase (horário de Brasília).
       </div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-        <input type="datetime-local" id="ko-deadline-input" style="flex:1;min-width:200px">
-        <button class="btn btn-sm btn-orange" onclick="saveKoDeadline()">✓ Salvar prazo</button>
-        <button class="btn btn-sm btn-secondary" onclick="clearKoDeadline()">✕ Remover</button>
-      </div>
-      <div id="ko-deadline-status" style="margin-top:8px;font-size:0.8rem;color:var(--muted)"></div>
+      <div id="ko-deadlines-table"></div>
     </div>
     <div class="adm-section">
       <h3>👥 Gestão de Usuários</h3>
@@ -711,7 +706,7 @@ const MATCH_DATES = {
 };
 
 const KO_ROUNDS = ['r32','r16','qf','sf','3rd','final'];
-const KO_LABELS = { r32:'Rodada de 32', r16:'Oitavas de Final', qf:'Quartas de Final', sf:'Semifinais', '3rd':'Disputa 3º Lugar', final:'Final' };
+const KO_LABELS = { r32:'16 Avos de Final', r16:'Oitavas de Final', qf:'Quartas de Final', sf:'Semifinais', '3rd':'Disputa 3º Lugar', final:'Final' };
 const KO_COUNT  = { r32:16, r16:8, qf:4, sf:2, '3rd':1, final:1 };
 const SCORING   = {
   groups: { winner:1,  score:3  },
@@ -728,19 +723,28 @@ const SCORING   = {
 // ════════════════════════════════════════════════════════════
 // Grupos: 11/06/2026 13:00 BRT = 11/06/2026 16:00 UTC
 const GROUPS_DEADLINE = new Date('2026-06-11T16:00:00Z');
-// Eliminatórias: Rodada de 32 começa 28/06/2026; prazo = dia anterior à meia-noite BRT
-const KO_DEADLINE_DEFAULT = new Date('2026-06-28T03:00:00Z'); // 28/06 00:00 BRT
-
-function getKoDeadline() {
-  return koDeadline ? new Date(koDeadline) : KO_DEADLINE_DEFAULT;
-}
+// Prazos por rodada eliminatória = horário do 1º jogo de cada fase (UTC)
+const KO_DEADLINES = {
+  r32:   new Date('2026-06-28T19:00:00Z'), // 28/jun 16:00 BRT
+  r16:   new Date('2026-07-04T17:00:00Z'), // 04/jul 14:00 BRT
+  qf:    new Date('2026-07-09T20:00:00Z'), // 09/jul 17:00 BRT
+  sf:    new Date('2026-07-14T19:00:00Z'), // 14/jul 16:00 BRT
+  '3rd': new Date('2026-07-18T21:00:00Z'), // 18/jul 18:00 BRT
+  final: new Date('2026-07-19T19:00:00Z'), // 19/jul 16:00 BRT
+};
 function grpsLocked() {
   return Date.now() >= GROUPS_DEADLINE.getTime() || phase === 'finished';
 }
-function koLocked() {
+function roundLocked(round) {
   if (phase !== 'knockout') return true;
-  if (Date.now() >= getKoDeadline().getTime()) return true;
-  return false;
+  const dl = KO_DEADLINES[round];
+  return !dl || Date.now() >= dl.getTime();
+}
+function fmtDeadlineBRT(dl) {
+  return dl.toLocaleString('pt-BR', {
+    day:'2-digit', month:'2-digit', year:'numeric',
+    hour:'2-digit', minute:'2-digit', timeZone:'America/Sao_Paulo'
+  });
 }
 function timeUntil(d) {
   const diff = (d instanceof Date ? d.getTime() : d) - Date.now();
@@ -758,7 +762,7 @@ function timeUntil(d) {
 // ════════════════════════════════════════════════════════════
 let db, currentUser, isAdmin = false;
 let phase = 'groups';
-let koDeadline = null; // timestamp (ms) carregado do Firebase
+// koDeadline removido — prazos são por rodada em KO_DEADLINES
 let allBets = {}, allResults = {}, participants = {}, koMatches = {};
 let curGroup = 'A', curAdmGroup = 'A';
 let curBetsUser = null, curBetsGroup = 'A';
@@ -977,8 +981,7 @@ function boot() {
 // FIREBASE
 // ════════════════════════════════════════════════════════════
 function listenFirebase() {
-  db.ref('settings/phase').on('value',       s => { phase      = s.val() || 'groups'; rerender(); });
-  db.ref('settings/ko_deadline').on('value', s => { koDeadline = s.val() || null;     rerender(); });
+  db.ref('settings/phase').on('value', s => { phase = s.val() || 'groups'; rerender(); });
   db.ref('participants').on('value', s => { participants = s.val() || {}; rerender(); });
   db.ref('bets').on('value',         s => { allBets      = s.val() || {}; rerender(); });
   db.ref('results').on('value',      s => { allResults   = s.val() || {}; rerender(); });
@@ -1262,7 +1265,7 @@ function renderRules() {
     <div class="card-title">🥊 Pontuação — Eliminatórias</div>
     <table class="rules-table">
       <tr><th>Fase</th><th>Jogos</th><th style="text-align:center">Vencedor</th><th style="text-align:center">Placar exato</th><th style="text-align:center">Máx.</th></tr>
-      <tr><td>Rodada de 32</td><td style="color:var(--muted)">16</td><td class="pts">3</td><td class="pts">6</td><td class="max">96</td></tr>
+      <tr><td>16 Avos de Final</td><td style="color:var(--muted)">16</td><td class="pts">3</td><td class="pts">6</td><td class="max">96</td></tr>
       <tr><td>Oitavas</td><td style="color:var(--muted)">8</td><td class="pts">5</td><td class="pts">10</td><td class="max">80</td></tr>
       <tr><td>Quartas</td><td style="color:var(--muted)">4</td><td class="pts">8</td><td class="pts">15</td><td class="max">60</td></tr>
       <tr><td>Semifinais</td><td style="color:var(--muted)">2</td><td class="pts">12</td><td class="pts">22</td><td class="max">44</td></tr>
@@ -1284,8 +1287,10 @@ function renderRules() {
   <div class="card rule-section">
     <div class="card-title">📅 Prazos · 🏆 Desempate</div>
     <div style="font-size:0.88rem;line-height:1.7;margin-bottom:10px">
-      ⚽ <strong>Grupos:</strong> até <strong style="color:var(--yellow)">11/06/2026 às 13h00</strong><br>
-      🥊 <strong>Eliminatórias:</strong> após o fim dos grupos, todas as apostas de uma vez
+      ⚽ <strong>Grupos:</strong> até <strong style="color:var(--yellow)">11/06/2026 às 13h00 (BRT)</strong><br>
+      🥊 <strong>Eliminatórias:</strong> apostas abertas por rodada, até o 1º jogo de cada fase:<br>
+      &nbsp;&nbsp;· 16 avos: 28/06 às 16h00 · Oitavas: 04/07 às 14h00 · Quartas: 09/07 às 17h00<br>
+      &nbsp;&nbsp;· Semis: 14/07 às 16h00 · 3º lugar: 18/07 às 18h00 · Final: 19/07 às 16h00
     </div>
     <div style="font-size:0.88rem;line-height:1.7">
       <strong>1º critério:</strong> mais placares exatos<br>
@@ -1423,37 +1428,35 @@ const koPending = {};
 function renderKO() {
   const el = document.getElementById('ko-content');
   if (phase === 'groups') {
-    const grpTimeLeft = timeUntil(GROUPS_DEADLINE);
-    const koDeadlineDate = getKoDeadline();
     el.innerHTML = `<div class="card" style="text-align:center;padding:32px">
       <div style="font-size:2.5rem;margin-bottom:12px">🔒</div>
       <div style="color:var(--muted);margin-bottom:8px">Apostas das eliminatórias serão liberadas após o encerramento dos grupos.</div>
-      <div style="font-size:0.8rem;color:var(--muted)">
-        Prazo para apostas das eliminatórias: <strong style="color:var(--yellow)">${koDeadlineDate.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'})} às 00h00</strong>
+      <div style="font-size:0.8rem;color:var(--muted);line-height:1.8">
+        ${Object.entries(KO_DEADLINES).map(([r,dl]) =>
+          `<div><strong style="color:var(--text)">${KO_LABELS[r]}:</strong> apostas até <strong style="color:var(--yellow)">${fmtDeadlineBRT(dl)} (BRT)</strong></div>`
+        ).join('')}
       </div>
     </div>`;
     return;
   }
-  const locked = koLocked();
-  const koDeadlineDate = getKoDeadline();
-  const koTimeLeft = timeUntil(koDeadlineDate);
 
-  // Banner de prazo
-  const banner = locked && phase !== 'groups'
-    ? `<div style="background:rgba(176,48,48,0.15);border:1px solid #b03030;border-radius:8px;padding:10px 14px;font-size:0.82rem;color:#ff9090;margin-bottom:14px">
-        🔒 Apostas encerradas — prazo expirou em ${koDeadlineDate.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'})} às 00h00
-       </div>`
-    : `<div style="background:rgba(26,122,60,0.15);border:1px solid #1a7a3c;border-radius:8px;padding:10px 14px;font-size:0.82rem;color:#5dde8a;margin-bottom:14px">
-        ✏️ Apostas abertas até ${koDeadlineDate.toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'})} às 00h00${koTimeLeft ? ' · ⏳ ' + koTimeLeft : ''}
-       </div>`;
-
-  const myBets   = (allBets[currentUser.id] || {}).knockout || {};
-  const results  = allResults.knockout || {};
+  const myBets    = (allBets[currentUser.id] || {}).knockout || {};
+  const results   = allResults.knockout || {};
   const endingLbl = { normal:'T. normal', extra:'Prorrog.', penalties:'Pênaltis' };
 
-  let html = banner;
+  let html = '';
   KO_ROUNDS.forEach(round => {
-    html += `<div class="round-header">── ${KO_LABELS[round]} ──</div>`;
+    const locked   = roundLocked(round);
+    const dl       = KO_DEADLINES[round];
+    const timeLeft = dl ? timeUntil(dl) : null;
+    const roundBanner = locked
+      ? `<div style="background:rgba(176,48,48,0.12);border:1px solid #b03030;border-radius:6px;padding:7px 12px;font-size:0.78rem;color:#ff9090;margin-bottom:10px">
+          🔒 Apostas encerradas — prazo: ${fmtDeadlineBRT(dl)} (BRT)
+         </div>`
+      : `<div style="background:rgba(26,122,60,0.12);border:1px solid #1a7a3c;border-radius:6px;padding:7px 12px;font-size:0.78rem;color:#5dde8a;margin-bottom:10px">
+          ✏️ Apostas abertas até ${fmtDeadlineBRT(dl)} (BRT)${timeLeft ? ' · ⏳ ' + timeLeft : ''}
+         </div>`;
+    html += `<div class="round-header">── ${KO_LABELS[round]} ──</div>${roundBanner}`;
     for (let i = 1; i <= KO_COUNT[round]; i++) {
       const mid   = `${round}_${i}`;
       const km    = koMatches[mid];
@@ -1545,6 +1548,8 @@ function koSetScore(mid) {
   if (h !== '' && a !== '') koPending[mid].score = `${h}-${a}`;
 }
 function saveKOBet(mid) {
+  const round = mid.split('_')[0];
+  if (roundLocked(round)) { toast('Prazo encerrado para esta rodada'); return; }
   const pending  = koPending[mid] || {};
   const existing = (allBets[currentUser.id] || {}).knockout?.[mid] || {};
   const h = document.getElementById(`koh_${mid}`)?.value || '';
@@ -1786,23 +1791,20 @@ let admResetOpen = {}; // uid → true se o painel de reset está aberto
 function renderAdmin(reset = true) {
   if (reset) { curAdmGroup = 'A'; admResetOpen = {}; }
 
-  // Popula o campo de prazo das eliminatórias
-  const koDl = getKoDeadline();
-  const koInput = document.getElementById('ko-deadline-input');
-  if (koInput) {
-    // Converte timestamp para datetime-local no fuso local
-    const d = koDeadline ? new Date(koDeadline) : KO_DEADLINE_DEFAULT;
-    const local = new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
-    koInput.value = local;
-  }
-  const koStatus = document.getElementById('ko-deadline-status');
-  if (koStatus) {
+  // Tabela de prazos por rodada
+  const dlTable = document.getElementById('ko-deadlines-table');
+  if (dlTable) {
     const now = Date.now();
-    const label = koDl.toLocaleString('pt-BR', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'});
-    const isDefault = !koDeadline;
-    const expired   = now >= koDl.getTime();
-    koStatus.style.color = expired ? '#ff9090' : '#5dde8a';
-    koStatus.textContent = `${isDefault ? 'Padrão: ' : 'Personalizado: '}${label}${expired ? ' (expirado)' : ''}`;
+    dlTable.innerHTML = Object.entries(KO_DEADLINES).map(([r, dl]) => {
+      const expired = now >= dl.getTime();
+      const color   = expired ? '#ff9090' : '#5dde8a';
+      const status  = expired ? '🔒 Encerrado' : '✅ Aberto';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.82rem">
+        <span style="color:var(--text)">${KO_LABELS[r]}</span>
+        <span style="color:var(--muted)">${fmtDeadlineBRT(dl)} BRT</span>
+        <span style="color:${color}">${status}</span>
+      </div>`;
+    }).join('');
   }
 
   renderAdminUsers();
@@ -1911,22 +1913,6 @@ async function admResetPassword(uid) {
 }
 
 function selAdmGroup(g) { curAdmGroup = g; renderAdmin(false); }
-
-function saveKoDeadline() {
-  const val = document.getElementById('ko-deadline-input').value;
-  if (!val) { toast('Selecione uma data e hora'); return; }
-  const ts = new Date(val).getTime();
-  if (isNaN(ts)) { toast('Data inválida'); return; }
-  db.ref('settings/ko_deadline').set(ts)
-    .then(() => toast('✓ Prazo salvo!'))
-    .catch(e => toast('Erro: ' + e.message));
-}
-function clearKoDeadline() {
-  if (!confirm('Remover prazo personalizado? Voltará para o padrão (28/06/2026 00h00).')) return;
-  db.ref('settings/ko_deadline').remove()
-    .then(() => toast('Prazo redefinido para o padrão'))
-    .catch(e => toast('Erro: ' + e.message));
-}
 
 function saveAdmGrpResult(mid) {
   const h = document.getElementById(`ar_h_${mid}`).value;
