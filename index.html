@@ -1546,21 +1546,24 @@ function renderKO() {
       html += `<div class="match-card ${cardCls}">`;
 
       if (!locked) {
-        const endOpts  = [{v:'normal',l:'Tempo normal'},{v:'extra',l:'Prorrogação'},{v:'penalties',l:'Pênaltis'}];
+        const endOpts   = [{v:'normal',l:'Tempo normal'},{v:'extra',l:'Prorrogação'},{v:'penalties',l:'Pênaltis'}];
         const needsSave = koPending[mid] !== undefined || !saved;
         const scoreH    = bScore.split('-')[0] || '';
         const scoreA    = bScore.split('-')[1] || '';
+        // Infer winner from current score for highlight
+        const hi = parseInt(scoreH), ai = parseInt(scoreA);
+        const inferred  = (!isNaN(hi) && !isNaN(ai) && hi !== ai) ? (hi > ai ? homeT : awayT) : '';
         html += `
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
-            <button class="ko-team-sel ${bWinner===homeT?'selected':''}" onclick="koSetWinner('${mid}','${homeT}')">${flag(homeT)} ${homeT}</button>
+            <span class="ko-team-sel ${inferred===homeT?'selected':''}" id="koth_${mid}">${flag(homeT)} ${homeT}</span>
             <div style="display:flex;align-items:center;gap:5px;flex-shrink:0">
               <input type="number" class="s-inp" min="0" max="30" placeholder="–"
-                value="${scoreH}" id="koh_${mid}" oninput="koSetScore('${mid}')">
+                value="${scoreH}" id="koh_${mid}" oninput="koSetScore('${mid}','${homeT}','${awayT}')">
               <span class="s-sep">×</span>
               <input type="number" class="s-inp" min="0" max="30" placeholder="–"
-                value="${scoreA}" id="koa_${mid}" oninput="koSetScore('${mid}')">
+                value="${scoreA}" id="koa_${mid}" oninput="koSetScore('${mid}','${homeT}','${awayT}')">
             </div>
-            <button class="ko-team-sel away ${bWinner===awayT?'selected':''}" onclick="koSetWinner('${mid}','${awayT}')">${awayT} ${flag(awayT)}</button>
+            <span class="ko-team-sel away ${inferred===awayT?'selected':''}" id="kota_${mid}">${awayT} ${flag(awayT)}</span>
           </div>
           <div class="ending-row">
             ${endOpts.map(o=>`<button class="ending-btn ${bEnding===o.v?'selected':''}" onclick="koSetEnding('${mid}','${o.v}')">${o.l}</button>`).join('')}
@@ -1568,8 +1571,8 @@ function renderKO() {
           ${bEnding==='penalties'?`<div style="font-size:0.7rem;color:var(--muted);text-align:center;margin-top:2px">(placar em cobranças, ex: 5-3)</div>`:''}
           <div style="text-align:center;margin-top:10px">
             ${needsSave
-              ? `<button class="btn-save-pending" onclick="saveKOBet('${mid}')">💾 Salvar</button>`
-              : `<button class="btn-save-done" onclick="saveKOBet('${mid}')">✓ Salvo</button>`}
+              ? `<button class="btn-save-pending" onclick="saveKOBet('${mid}','${homeT}','${awayT}')">💾 Salvar</button>`
+              : `<button class="btn-save-done" onclick="saveKOBet('${mid}','${homeT}','${awayT}')">✓ Salvo</button>`}
           </div>`;
       } else {
         const scoreH = bet?.score?.split('-')[0] ?? '—';
@@ -1594,32 +1597,38 @@ function renderKO() {
   el.innerHTML = html;
 }
 
-function koSetWinner(mid, winner) {
-  if (!koPending[mid]) koPending[mid] = { endingType:'normal' };
-  koPending[mid].winner = winner;
-  renderKO();
-}
 function koSetEnding(mid, endingType) {
   if (!koPending[mid]) koPending[mid] = {};
   koPending[mid].endingType = endingType;
   renderKO();
 }
-function koSetScore(mid) {
+function koSetScore(mid, homeT, awayT) {
   const h = document.getElementById(`koh_${mid}`)?.value || '';
   const a = document.getElementById(`koa_${mid}`)?.value || '';
   if (!koPending[mid]) koPending[mid] = {};
-  if (h !== '' && a !== '') koPending[mid].score = `${h}-${a}`;
+  if (h !== '' && a !== '') {
+    koPending[mid].score = `${h}-${a}`;
+    // Infer winner and update highlights in-place (no re-render = no focus loss)
+    const hi = parseInt(h), ai = parseInt(a);
+    const winner = hi > ai ? homeT : hi < ai ? awayT : null;
+    koPending[mid].winner = winner || koPending[mid].winner || null;
+    const homeEl = document.getElementById(`koth_${mid}`);
+    const awayEl = document.getElementById(`kota_${mid}`);
+    if (homeEl) homeEl.className = `ko-team-sel${winner===homeT?' selected':''}`;
+    if (awayEl) awayEl.className = `ko-team-sel away${winner===awayT?' selected':''}`;
+  }
 }
-function saveKOBet(mid) {
+function saveKOBet(mid, homeT, awayT) {
   const round = mid.split('_')[0];
   if (roundLocked(round)) { toast('Prazo encerrado para esta rodada'); return; }
+  const h = parseInt(document.getElementById(`koh_${mid}`)?.value);
+  const a = parseInt(document.getElementById(`koa_${mid}`)?.value);
+  if (isNaN(h) || isNaN(a)) { toast('Insira o placar completo'); return; }
+  if (h === a) { toast('Empate inválido nas eliminatórias — reveja o placar'); return; }
+  const winner   = h > a ? homeT : awayT;
   const pending  = koPending[mid] || {};
   const existing = (allBets[currentUser.id] || {}).knockout?.[mid] || {};
-  const h = document.getElementById(`koh_${mid}`)?.value || '';
-  const a = document.getElementById(`koa_${mid}`)?.value || '';
-  const merged = { ...existing, ...pending };
-  if (h !== '' && a !== '') merged.score = `${h}-${a}`;
-  if (!merged.winner)    { toast('Selecione o vencedor primeiro'); return; }
+  const merged   = { ...existing, ...pending, winner, score: `${h}-${a}` };
   if (!merged.endingType) merged.endingType = 'normal';
   db.ref(`bets/${currentUser.id}/knockout/${mid}`).set(merged)
     .then(() => { delete koPending[mid]; renderKO(); toast('✓ Aposta salva!'); })
