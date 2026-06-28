@@ -555,10 +555,11 @@
   <div id="screen-admin" class="screen hidden">
     <div class="adm-section">
       <h3>⚙️ Fase atual</h3>
+      <div style="font-size:0.8rem;color:var(--muted);margin-bottom:8px">Fase em curso: <strong id="adm-phase-label" style="color:var(--yellow)">—</strong></div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-sm btn-green"     onclick="setPhase('groups')">Fase de grupos</button>
-        <button class="btn btn-sm btn-primary"   onclick="setPhase('knockout')">Eliminatórias</button>
-        <button class="btn btn-sm btn-secondary" onclick="setPhase('finished')">Encerrado</button>
+        <button id="adm-btn-groups"   class="btn btn-sm btn-secondary" onclick="setPhase('groups')">⚽ Fase de grupos</button>
+        <button id="adm-btn-knockout" class="btn btn-sm btn-secondary" onclick="setPhase('knockout')">🥊 Eliminatórias</button>
+        <button id="adm-btn-finished" class="btn btn-sm btn-secondary" onclick="setPhase('finished')">🏆 Encerrado</button>
       </div>
     </div>
     <div class="adm-section">
@@ -708,6 +709,25 @@ const MATCH_DATES = {
 const KO_ROUNDS = ['r32','r16','qf','sf','3rd','final'];
 const KO_LABELS = { r32:'16 Avos de Final', r16:'Oitavas de Final', qf:'Quartas de Final', sf:'Semifinais', '3rd':'Disputa 3º Lugar', final:'Final' };
 const KO_COUNT  = { r32:16, r16:8, qf:4, sf:2, '3rd':1, final:1 };
+// Confrontos dos 16 avos (ordem cronológica, fonte: CNN Brasil / World Soccer Talk 28/06/2026)
+const KO_MATCHES_DEFAULT = {
+  r32_1:  { home:'África do Sul',        away:'Canadá' },
+  r32_2:  { home:'Brasil',               away:'Japão' },
+  r32_3:  { home:'Alemanha',             away:'Paraguai' },
+  r32_4:  { home:'Holanda',              away:'Marrocos' },
+  r32_5:  { home:'Costa do Marfim',      away:'Noruega' },
+  r32_6:  { home:'França',               away:'Suécia' },
+  r32_7:  { home:'México',               away:'Equador' },
+  r32_8:  { home:'Inglaterra',           away:'RD Congo' },
+  r32_9:  { home:'Bélgica',              away:'Senegal' },
+  r32_10: { home:'EUA',                  away:'Bósnia e Herzegovina' },
+  r32_11: { home:'Espanha',              away:'Áustria' },
+  r32_12: { home:'Portugal',             away:'Croácia' },
+  r32_13: { home:'Suíça',               away:'Argélia' },
+  r32_14: { home:'Austrália',            away:'Egito' },
+  r32_15: { home:'Argentina',            away:'Cabo Verde' },
+  r32_16: { home:'Colômbia',             away:'Gana' },
+};
 const SCORING   = {
   groups: { winner:1,  score:3  },
   r32:    { winner:3,  score:6  },
@@ -735,8 +755,20 @@ const KO_DEADLINES = {
 function grpsLocked() {
   return Date.now() >= GROUPS_DEADLINE.getTime() || phase === 'finished';
 }
+function prevRoundComplete(round) {
+  if (round === 'r32') return true; // grupos já concluídos
+  const prevMap = { r16:'r32', qf:'r16', sf:'qf', '3rd':'sf', final:'sf' };
+  const prev = prevMap[round];
+  if (!prev) return false;
+  const koRes = allResults.knockout || {};
+  for (let i = 1; i <= KO_COUNT[prev]; i++) {
+    if (!koRes[`${prev}_${i}`]) return false;
+  }
+  return true;
+}
 function roundLocked(round) {
   if (phase !== 'knockout') return true;
+  if (!prevRoundComplete(round)) return true;
   const dl = KO_DEADLINES[round];
   return !dl || Date.now() >= dl.getTime();
 }
@@ -1459,7 +1491,7 @@ function renderKO() {
     html += `<div class="round-header">── ${KO_LABELS[round]} ──</div>${roundBanner}`;
     for (let i = 1; i <= KO_COUNT[round]; i++) {
       const mid   = `${round}_${i}`;
-      const km    = koMatches[mid];
+      const km    = (koMatches[mid] || KO_MATCHES_DEFAULT[mid]);
       const res   = results[mid];
       const saved = myBets[mid];
       const bet   = koPending[mid] !== undefined ? koPending[mid] : saved;
@@ -1791,14 +1823,30 @@ let admResetOpen = {}; // uid → true se o painel de reset está aberto
 function renderAdmin(reset = true) {
   if (reset) { curAdmGroup = 'A'; admResetOpen = {}; }
 
+  // Destaca botão da fase atual
+  const phaseLabels = { groups:'⚽ Fase de Grupos', knockout:'🥊 Eliminatórias', finished:'🏆 Encerrado' };
+  const phaseLabel = document.getElementById('adm-phase-label');
+  if (phaseLabel) phaseLabel.textContent = phaseLabels[phase] || phase;
+  ['groups','knockout','finished'].forEach(p => {
+    const btn = document.getElementById(`adm-btn-${p}`);
+    if (btn) {
+      btn.className = phase === p
+        ? 'btn btn-sm btn-green'
+        : 'btn btn-sm btn-secondary';
+    }
+  });
+
   // Tabela de prazos por rodada
   const dlTable = document.getElementById('ko-deadlines-table');
   if (dlTable) {
     const now = Date.now();
     dlTable.innerHTML = Object.entries(KO_DEADLINES).map(([r, dl]) => {
-      const expired = now >= dl.getTime();
-      const color   = expired ? '#ff9090' : '#5dde8a';
-      const status  = expired ? '🔒 Encerrado' : '✅ Aberto';
+      const expired  = now >= dl.getTime();
+      const prevDone = prevRoundComplete(r);
+      let color, status;
+      if (expired)       { color = '#ff9090'; status = '🔒 Encerrado'; }
+      else if (!prevDone){ color = '#ffaa55'; status = '⏳ Aguardando fase anterior'; }
+      else               { color = '#5dde8a'; status = '✅ Aberto'; }
       return `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border);font-size:0.82rem">
         <span style="color:var(--text)">${KO_LABELS[r]}</span>
         <span style="color:var(--muted)">${fmtDeadlineBRT(dl)} BRT</span>
@@ -1933,7 +1981,7 @@ function renderAdmKO() {
     html += `<div style="margin:14px 0 8px"><strong style="color:var(--yellow);font-size:0.88rem">${KO_LABELS[round]}</strong></div>`;
     for (let i = 1; i <= KO_COUNT[round]; i++) {
       const mid = `${round}_${i}`;
-      const km  = koMatches[mid];
+      const km  = (koMatches[mid] || KO_MATCHES_DEFAULT[mid]);
       const res = koResults[mid];
       const cur = { ...(res||{}), ...(admKoPending[mid]||{}) };
       const homeT = km ? km.home : '';
@@ -1997,10 +2045,10 @@ function saveAdmKOResult(mid) {
     .catch(e => toast('Erro: ' + e.message));
 }
 function setPhase(p) {
-  const labels = { groups:'Fase de Grupos', knockout:'Eliminatórias', finished:'Encerrado' };
-  if (!confirm(`Alterar fase para: ${labels[p]}?`)) return;
+  const labels = { groups:'⚽ Fase de Grupos', knockout:'🥊 Eliminatórias', finished:'🏆 Encerrado' };
+  if (phase === p) { toast(`Já está em: ${labels[p]}`); return; }
   db.ref('settings/phase').set(p)
-    .then(() => toast(`Fase alterada: ${labels[p]}`))
+    .then(() => toast(`✓ Fase alterada para ${labels[p]}`))
     .catch(e => toast('Erro: ' + e.message));
 }
 
@@ -2115,7 +2163,7 @@ function printUserBets(uid) {
           <th style="padding:5px 8px;text-align:center;border:1px solid #ddd">Pts</th>
         </tr>`;
     for (let i=1;i<=KO_COUNT[round];i++) {
-      const mid=`${round}_${i}`; const km=koMatches[mid];
+      const mid=`${round}_${i}`; const km=(koMatches[mid] || KO_MATCHES_DEFAULT[mid]);
       const bet=koBets[mid]; const res=koRes[mid];
       const pts=res&&bet?scoreKO(bet,res,round):null;
       const bg=pts===SCORING[round].score?'#d4edda':pts===SCORING[round].winner?'#d1ecf1':pts===0&&bet?'#f8d7da':'#fff';
