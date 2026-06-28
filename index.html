@@ -1500,7 +1500,7 @@ function renderKO() {
 
   const myBets    = (allBets[currentUser.id] || {}).knockout || {};
   const results   = allResults.knockout || {};
-  const endingLbl = { normal:'T. normal', extra:'Prorrog.', penalties:'Pênaltis' };
+  const endingLbl = { normal:'T. regulamentar', extra:'T. regulamentar', penalties:'Pênaltis' };
 
   let html = '';
   KO_ROUNDS.forEach(round => {
@@ -1546,7 +1546,7 @@ function renderKO() {
       html += `<div class="match-card ${cardCls}">`;
 
       if (!locked) {
-        const endOpts   = [{v:'normal',l:'Tempo normal'},{v:'extra',l:'Prorrogação'},{v:'penalties',l:'Pênaltis'}];
+        const endOpts   = [{v:'normal',l:'T. regulamentar'},{v:'penalties',l:'Pênaltis'}];
         const needsSave = koPending[mid] !== undefined || !saved;
         const scoreH    = bScore.split('-')[0] || '';
         const scoreA    = bScore.split('-')[1] || '';
@@ -1762,7 +1762,7 @@ function renderBets(reset = true) {
     document.getElementById('bets-pdf-row').innerHTML = '';
     document.getElementById('bets-gtabs').innerHTML = '';
 
-    const endingLbl = { normal:'T. normal', extra:'Prorrogação', penalties:'Pênaltis' };
+    const endingLbl = { normal:'T. regulamentar', extra:'T. regulamentar', penalties:'Pênaltis' };
     const koRes  = allResults.knockout || {};
     const koBets = (allBets[curBetsUser] || {}).knockout || {};
     const allUids = Object.keys(participants);
@@ -2115,7 +2115,7 @@ const admKoPending = {};
 
 function renderAdmKO() {
   const koResults = allResults.knockout || {};
-  const endingLbl = { normal:'T. Normal', extra:'Prorrog.', penalties:'Pênaltis' };
+  const endingLbl = { normal:'T. regulamentar', extra:'T. regulamentar', penalties:'Pênaltis' };
   let html = '';
   KO_ROUNDS.forEach(round => {
     html += `<div style="margin:14px 0 8px"><strong style="color:var(--yellow);font-size:0.88rem">${KO_LABELS[round]}</strong></div>`;
@@ -2142,7 +2142,7 @@ function renderAdmKO() {
           ${awayT?`<button class="winner-btn btn-xs ${cur.winner===awayT?'selected':''}" onclick="admKoSet('${mid}','winner','${awayT}')" style="min-width:80px">${awayT}</button>`:''}
         </div>
         <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
-          ${['normal','extra','penalties'].map(v=>`<button class="ending-btn ${cur.endingType===v?'selected':''}" onclick="admKoSet('${mid}','endingType','${v}')">${endingLbl[v]}</button>`).join('')}
+          ${['normal','penalties'].map(v=>`<button class="ending-btn ${(cur.endingType===v||(v==='normal'&&cur.endingType==='extra'))?'selected':''}" onclick="admKoSet('${mid}','endingType','${v}')">${endingLbl[v]}</button>`).join('')}
         </div>
         <div class="score-row">
           <input type="number" class="s-inp" min="0" max="30" placeholder="–"
@@ -2218,7 +2218,10 @@ function scoreGroup(bet, res) {
 function scoreKO(bet, res, round) {
   if (!bet||!res) return 0;
   const pts=SCORING[round];
-  if (bet.winner===res.winner && bet.endingType===res.endingType && bet.score===res.score) return pts.score;
+  // Treat 'normal' and 'extra' as equivalent — only distinction is penalties vs non-penalties
+  const betIsPen = bet.endingType === 'penalties';
+  const resIsPen = res.endingType === 'penalties';
+  if (bet.winner===res.winner && betIsPen===resIsPen && bet.score===res.score) return pts.score;
   if (bet.winner===res.winner) return pts.winner;
   return 0;
 }
@@ -2254,7 +2257,7 @@ function printUserBets(uid) {
   const koBets    = (allBets[uid]||{}).knockout || {};
   const grpRes    = allResults.groups   || {};
   const koRes     = allResults.knockout || {};
-  const endingLbl = {normal:'T. normal',extra:'Prorrogação',penalties:'Pênaltis'};
+  const endingLbl = {normal:'T. regulamentar',extra:'T. regulamentar',penalties:'Pênaltis'};
   const isMe      = uid === currentUser.id;
   const generatedBy = isMe
     ? `Gerado pelo próprio participante`
