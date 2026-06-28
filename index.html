@@ -1080,6 +1080,14 @@ function goTo(id) {
 // ════════════════════════════════════════════════════════════
 // HOME
 // ════════════════════════════════════════════════════════════
+// Retorna apenas uids que têm pelo menos 1 aposta de grupos
+// (filtra usuários "fantasma" que se cadastraram mas nunca apostaram)
+function activeUids() {
+  return Object.keys(participants).filter(uid =>
+    Object.keys((allBets[uid] || {}).groups || {}).length > 0
+  );
+}
+
 function calcPrizePool() {
   const total = Object.keys(GM).length; // 72
   const completed = Object.keys(participants).filter(uid => {
@@ -1149,7 +1157,7 @@ function renderRankingChart() {
 
   const grpResults = allResults.groups   || {};
   const koResults  = allResults.knockout || {};
-  const uids = Object.keys(participants);
+  const uids = activeUids();
   if (uids.length === 0) { el.innerHTML = ''; return; }
 
   // ── Fase de grupos: um ponto por dia com resultados ──────────
@@ -1683,7 +1691,7 @@ function saveKOBet(mid, homeT, awayT) {
 // ════════════════════════════════════════════════════════════
 function renderBets(reset = true) {
   if (reset) { curBetsUser = null; curBetsGroup = 'A'; curBetsPhase = 'groups'; }
-  const uids = Object.keys(participants);
+  const uids = activeUids();
   if (!uids.length) {
     document.getElementById('bets-ptabs').innerHTML = '';
     document.getElementById('bets-phase-tabs').innerHTML = '';
@@ -1739,7 +1747,7 @@ function renderBets(reset = true) {
 
     const results = allResults.groups || {};
     const matches = Object.entries(GM).filter(([k]) => k.startsWith(`G_${curBetsGroup}_`));
-    const allUids = Object.keys(participants);
+    const allUids = activeUids();
 
     document.getElementById('bets-content').innerHTML = matches.map(([mid, m]) => {
       const bet = theirBets[mid];
@@ -1808,7 +1816,7 @@ function renderBets(reset = true) {
     const endingLbl = { normal:'T. regulamentar', extra:'T. regulamentar', penalties:'Pênaltis' };
     const koRes  = allResults.knockout || {};
     const koBets = (allBets[curBetsUser] || {}).knockout || {};
-    const allUids = Object.keys(participants);
+    const allUids = activeUids();
     let html = '';
 
     KO_ROUNDS.forEach(round => {
@@ -1928,7 +1936,7 @@ function toggleVoteNames(mid, type) {
 
 // Calcula posições do ranking considerando apenas resultados até maxDate (exclusive)
 function getRankPositions(maxDate) {
-  const uids = Object.keys(participants);
+  const uids = activeUids();
   const grpRes = allResults.groups || {};
   const koRes  = allResults.knockout || {};
   const ranked = uids.map(uid => {
@@ -1956,7 +1964,7 @@ function getRankPositions(maxDate) {
 }
 
 function renderRanking() {
-  const scores = Object.keys(participants).map(uid => {
+  const scores = activeUids().map(uid => {
     const pts = calcPoints(uid);
     return { uid, name: participants[uid].name, ...pts };
   }).sort((a, b) => b.total!==a.total ? b.total-a.total : b.scores!==a.scores ? b.scores-a.scores : b.winners-a.winners);
