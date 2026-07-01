@@ -755,6 +755,31 @@ const KO_MATCHES_DEFAULT = {
   r32_15: { home:'Argentina',            away:'Cabo Verde' },
   r32_16: { home:'Colômbia',             away:'Gana' },
 };
+// Datas oficiais FIFA 2026 de cada jogo eliminatório (fonte: tabeladacopa.com)
+const KO_MATCH_DATES = {
+  // 16 Avos — 28/06 a 03/07
+  r32_1:'2026-06-28',  r32_2:'2026-06-28',  r32_3:'2026-06-28',  r32_4:'2026-06-28',
+  r32_5:'2026-06-29',  r32_6:'2026-06-29',
+  r32_7:'2026-06-30',  r32_8:'2026-06-30',
+  r32_9:'2026-07-01',  r32_10:'2026-07-01',
+  r32_11:'2026-07-02', r32_12:'2026-07-02',
+  r32_13:'2026-07-03', r32_14:'2026-07-03', r32_15:'2026-07-03', r32_16:'2026-07-03',
+  // Oitavas — 04/07 a 07/07
+  r16_1:'2026-07-04',  r16_2:'2026-07-04',
+  r16_3:'2026-07-05',  r16_4:'2026-07-05',
+  r16_5:'2026-07-06',  r16_6:'2026-07-06',
+  r16_7:'2026-07-07',  r16_8:'2026-07-07',
+  // Quartas — 09/07 a 11/07
+  qf_1:'2026-07-09',   qf_2:'2026-07-09',
+  qf_3:'2026-07-10',
+  qf_4:'2026-07-11',
+  // Semifinais — 14/07 e 15/07
+  sf_1:'2026-07-14',
+  sf_2:'2026-07-15',
+  // 3º Lugar e Final
+  '3rd_1':'2026-07-18',
+  final_1:'2026-07-19'
+};
 const SCORING   = {
   groups: { winner:1,  score:3  },
   r32:    { winner:3,  score:6  },
@@ -799,6 +824,15 @@ function roundLocked(round) {
   const dl = KO_DEADLINES[round];
   return !dl || Date.now() >= dl.getTime();
 }
+// Locking por partida individual — considera liberação manual pelo admin
+function matchLocked(mid) {
+  const round = mid.split('_')[0];
+  if (phase !== 'knockout') return true;
+  const dl = KO_DEADLINES[round];
+  if (dl && Date.now() >= dl.getTime()) return true; // prazo expirado
+  if (prevRoundComplete(round)) return false;         // rodada naturalmente aberta
+  return !koUnlocked[mid];                            // verifica liberação manual
+}
 function fmtDeadlineBRT(dl) {
   return dl.toLocaleString('pt-BR', {
     day:'2-digit', month:'2-digit', year:'numeric',
@@ -822,7 +856,7 @@ function timeUntil(d) {
 let db, currentUser, isAdmin = false;
 let phase = 'groups';
 // koDeadline removido — prazos são por rodada em KO_DEADLINES
-let allBets = {}, allResults = {}, participants = {}, koMatches = {};
+let allBets = {}, allResults = {}, participants = {}, koMatches = {}, koUnlocked = {};
 let curGroup = 'A', curAdmGroup = 'A';
 let curBetsUser = null, curBetsGroup = 'A', curBetsPhase = 'groups';
 let pendingGrp = {};
@@ -1045,6 +1079,7 @@ function listenFirebase() {
   db.ref('bets').on('value',         s => { allBets      = s.val() || {}; rerender(); });
   db.ref('results').on('value',      s => { allResults   = s.val() || {}; rerender(); });
   db.ref('ko_matches').on('value',   s => { koMatches    = s.val() || {}; rerender(); });
+  db.ref('ko_unlocked').on('value', s => { koUnlocked   = s.val() || {}; rerender(); });
 }
 
 function rerender() {
@@ -1166,11 +1201,13 @@ function renderRankingChart() {
     Object.entries(grpResults).some(([mid]) => MATCH_DATES[mid] === date)
   );
 
-  // ── Fase eliminatória: um ponto por rodada com resultados ────
-  const KO_SHORT = { r32:'16 Avos', r16:'Oitavas', qf:'Quartas', sf:'Semis', '3rd':'3° Lugar', final:'Final' };
-  const koRoundsWithRes = KO_ROUNDS.filter(round =>
-    [...Array(KO_COUNT[round])].some((_, i) => koResults[`${round}_${i+1}`])
-  );
+  // ── Fase eliminatória: um ponto por dia de jogo ──────────────
+  const koDays = [...new Set(
+    Object.keys(koResults)
+      .filter(mid => koResults[mid])
+      .map(mid => KO_MATCH_DATES[mid] || '')
+      .filter(d => d)
+  )].sort();
 
   // ── Timeline unificada ───────────────────────────────────────
   const timeline = [
@@ -1178,7 +1215,10 @@ function renderRankingChart() {
       const dt = new Date(d + 'T12:00:00');
       return { label: `${dt.getDate()}/${dt.getMonth()+1}`, type: 'group', key: d };
     }),
-    ...koRoundsWithRes.map(r => ({ label: KO_SHORT[r], type: 'ko', key: r }))
+    ...koDays.map(d => {
+      const dt = new Date(d + 'T12:00:00');
+      return { label: `${dt.getDate()}/${dt.getMonth()+1}`, type: 'ko', key: d };
+    })
   ];
 
   if (timeline.length === 0) {
@@ -1191,7 +1231,7 @@ function renderRankingChart() {
   const lastGrpDay = grpDays.length > 0 ? grpDays[grpDays.length - 1] : '';
   const snapshots = timeline.map((point, idx) => {
     const cutoffGrpDate = point.type === 'group' ? point.key : lastGrpDay;
-    const koRoundsUpTo  = timeline.slice(0, idx + 1).filter(p => p.type === 'ko').map(p => p.key);
+    const cutoffKoDate  = point.type === 'ko' ? point.key : '';
 
     const ranked = uids.map(uid => {
       let total = 0, scores = 0;
@@ -1204,15 +1244,20 @@ function renderRankingChart() {
         const p = scoreGroup(grpBets[mid], res);
         total += p; if (p === 3) scores++;
       });
-      // Pontos KO das rodadas já exibidas
-      koRoundsUpTo.forEach(round => {
-        for (let i = 1; i <= KO_COUNT[round]; i++) {
-          const res = koResults[`${round}_${i}`];
-          if (!res) continue;
-          const p = scoreKO(koBets[`${round}_${i}`], res, round);
-          total += p; if (p === SCORING[round].score) scores++;
-        }
-      });
+      // Pontos KO dos jogos até a data de corte
+      if (cutoffKoDate) {
+        KO_ROUNDS.forEach(round => {
+          for (let i = 1; i <= KO_COUNT[round]; i++) {
+            const mid = `${round}_${i}`;
+            const res = koResults[mid];
+            if (!res) continue;
+            const resDate = KO_MATCH_DATES[mid] || '';
+            if (!resDate || resDate > cutoffKoDate) continue;
+            const p = scoreKO(koBets[mid], res, round);
+            total += p; if (p === SCORING[round].score) scores++;
+          }
+        });
+      }
       return { uid, total, scores };
     }).sort((a, b) => b.total - a.total || b.scores - a.scores);
 
@@ -1241,7 +1286,7 @@ function renderRankingChart() {
     <div style="display:flex;align-items:center;gap:14px;margin-top:8px;font-size:0.72rem;color:var(--muted);flex-wrap:wrap">
       <span><span style="display:inline-block;width:18px;height:2.5px;background:var(--yellow);vertical-align:middle;border-radius:2px;margin-right:4px"></span>Você</span>
       <span><span style="display:inline-block;width:18px;height:1px;background:rgba(255,255,255,0.25);vertical-align:middle;border-radius:2px;margin-right:4px"></span>Outros</span>
-      ${koRoundsWithRes.length > 0 ? `<span><span style="display:inline-block;width:18px;height:1px;border-top:1px dashed rgba(244,196,48,0.5);vertical-align:middle;margin-right:4px"></span>⚽ → 🥊</span>` : ''}
+      ${koDays.length > 0 ? `<span><span style="display:inline-block;width:18px;height:1px;border-top:1px dashed rgba(244,196,48,0.5);vertical-align:middle;margin-right:4px"></span>⚽ → 🥊</span>` : ''}
       <span style="margin-left:auto">1° = topo · ${N}° = base</span>
     </div>`;
 
@@ -1555,16 +1600,27 @@ function renderKO() {
 
   let html = '';
   KO_ROUNDS.forEach(round => {
-    const locked   = roundLocked(round);
-    const dl       = KO_DEADLINES[round];
-    const timeLeft = dl ? timeUntil(dl) : null;
-    const roundBanner = locked
-      ? `<div style="background:rgba(176,48,48,0.12);border:1px solid #b03030;border-radius:6px;padding:7px 12px;font-size:0.78rem;color:#ff9090;margin-bottom:10px">
-          🔒 Apostas encerradas — prazo: ${fmtDeadlineBRT(dl)} (BRT)
-         </div>`
-      : `<div style="background:rgba(26,122,60,0.12);border:1px solid #1a7a3c;border-radius:6px;padding:7px 12px;font-size:0.78rem;color:#5dde8a;margin-bottom:10px">
-          ✏️ Apostas abertas até ${fmtDeadlineBRT(dl)} (BRT)${timeLeft ? ' · ⏳ ' + timeLeft : ''}
-         </div>`;
+    const dl           = KO_DEADLINES[round];
+    const timeLeft     = dl ? timeUntil(dl) : null;
+    const deadlinePast = dl && Date.now() >= dl.getTime();
+    const naturalOpen  = !roundLocked(round);
+    const anyUnlocked  = [...Array(KO_COUNT[round])].some((_, i) => koUnlocked[`${round}_${i+1}`]);
+
+    let roundBanner = '';
+    if (naturalOpen) {
+      roundBanner = `<div style="background:rgba(26,122,60,0.12);border:1px solid #1a7a3c;border-radius:6px;padding:7px 12px;font-size:0.78rem;color:#5dde8a;margin-bottom:10px">
+        ✏️ Apostas abertas até ${fmtDeadlineBRT(dl)} (BRT)${timeLeft ? ' · ⏳ ' + timeLeft : ''}
+       </div>`;
+    } else if (deadlinePast) {
+      roundBanner = `<div style="background:rgba(176,48,48,0.12);border:1px solid #b03030;border-radius:6px;padding:7px 12px;font-size:0.78rem;color:#ff9090;margin-bottom:10px">
+        🔒 Apostas encerradas — prazo: ${fmtDeadlineBRT(dl)} (BRT)
+       </div>`;
+    } else if (anyUnlocked) {
+      roundBanner = `<div style="background:rgba(244,196,48,0.10);border:1px solid rgba(244,196,48,0.4);border-radius:6px;padding:7px 12px;font-size:0.78rem;color:var(--yellow);margin-bottom:10px">
+        ⚡ Alguns confrontos liberados pelo admin${dl ? ` · prazo: ${fmtDeadlineBRT(dl)} (BRT)` : ''}${timeLeft ? ' · ⏳ ' + timeLeft : ''}
+       </div>`;
+    }
+
     html += `<div class="round-header">── ${KO_LABELS[round]} ──</div>${roundBanner}`;
     for (let i = 1; i <= KO_COUNT[round]; i++) {
       const mid   = `${round}_${i}`;
@@ -1572,11 +1628,14 @@ function renderKO() {
       const res   = results[mid];
       const saved = myBets[mid];
       const bet   = koPending[mid] !== undefined ? koPending[mid] : saved;
-      const homeT = km ? km.home : `Time A (Jogo ${i})`;
-      const awayT = km ? km.away : `Time B (Jogo ${i})`;
+      const homeT = km ? km.home : null;
+      const awayT = km ? km.away : null;
       const bWinner = bet?.winner || '';
       const bEnding = bet?.endingType || 'normal';
       const bScore  = bet?.score || '';
+
+      // Se os times ainda não foram definidos e a partida não está liberada, não renderizar
+      if (!homeT && !koUnlocked[mid] && !naturalOpen) return;
 
       let pts = 0, cardCls = '';
       if (res) {
@@ -1595,8 +1654,9 @@ function renderKO() {
       }
 
       html += `<div class="match-card ${cardCls}">`;
+      const locked = matchLocked(mid);
 
-      if (!locked) {
+      if (!locked && homeT) {
         const endOpts   = [{v:'normal',l:'T. regulamentar'},{v:'penalties',l:'Pênaltis'}];
         const needsSave = koPending[mid] !== undefined || !saved;
         const scoreH    = bScore.split('-')[0] || '';
@@ -1625,7 +1685,7 @@ function renderKO() {
               ? `<button class="btn-save-pending" onclick="saveKOBet('${mid}','${homeT}','${awayT}')">💾 Salvar</button>`
               : `<button class="btn-save-done" onclick="saveKOBet('${mid}','${homeT}','${awayT}')">✓ Salvo</button>`}
           </div>`;
-      } else {
+      } else if (homeT) {
         const scoreH = bet?.score?.split('-')[0] ?? '—';
         const scoreA = bet?.score?.split('-')[1] ?? '—';
         html += `<div class="match-teams">
@@ -1670,8 +1730,7 @@ function koSetScore(mid, homeT, awayT) {
   }
 }
 function saveKOBet(mid, homeT, awayT) {
-  const round = mid.split('_')[0];
-  if (roundLocked(round)) { toast('Prazo encerrado para esta rodada'); return; }
+  if (matchLocked(mid)) { toast('Prazo encerrado para esta partida'); return; }
   const h = parseInt(document.getElementById(`koh_${mid}`)?.value);
   const a = parseInt(document.getElementById(`koa_${mid}`)?.value);
   if (isNaN(h) || isNaN(a)) { toast('Insira o placar completo'); return; }
@@ -2188,6 +2247,19 @@ function renderAdmKO() {
           <input type="text" placeholder="Visitante"  value="${awayT}" id="kt_a_${mid}" style="flex:1;font-size:0.8rem;padding:6px 8px">
           <button class="btn btn-xs btn-secondary" onclick="saveKOTeams('${mid}')">Definir</button>
         </div>
+        <div style="margin-bottom:8px">
+          ${(()=>{
+            const isUnlocked = !!koUnlocked[mid];
+            const canUnlock  = !!(homeT && awayT);
+            const hasResult  = !!res;
+            if (hasResult) return `<span style="font-size:0.75rem;color:var(--muted)">Resultado registrado — apostas encerradas</span>`;
+            return `<button onclick="admToggleUnlock('${mid}')"
+              style="font-size:0.78rem;padding:5px 12px;border-radius:6px;border:1px solid ${isUnlocked?'#1a7a3c':'rgba(244,196,48,0.4)'};background:${isUnlocked?'rgba(26,122,60,0.2)':'rgba(244,196,48,0.08)'};color:${isUnlocked?'#5dde8a':'var(--yellow)'};cursor:${canUnlock?'pointer':'not-allowed'};opacity:${canUnlock?'1':'0.45'}"
+              ${!canUnlock?'disabled title="Defina os times primeiro"':''}>
+              ${isUnlocked ? '🔓 Apostas abertas — clique para fechar' : '🔒 Liberar apostas para este jogo'}
+            </button>`;
+          })()}
+        </div>
         <div style="display:flex;gap:5px;flex-wrap:wrap;margin-bottom:6px">
           ${homeT?`<button class="winner-btn btn-xs ${cur.winner===homeT?'selected':''}" onclick="admKoSet('${mid}','winner','${homeT}')" style="min-width:80px">${homeT}</button>`:''}
           ${awayT?`<button class="winner-btn btn-xs ${cur.winner===awayT?'selected':''}" onclick="admKoSet('${mid}','winner','${awayT}')" style="min-width:80px">${awayT}</button>`:''}
@@ -2209,6 +2281,14 @@ function renderAdmKO() {
   document.getElementById('adm-ko-content').innerHTML = html;
 }
 
+function admToggleUnlock(mid) {
+  const isUnlocked = !!koUnlocked[mid];
+  const op = isUnlocked
+    ? db.ref(`ko_unlocked/${mid}`).remove()
+    : db.ref(`ko_unlocked/${mid}`).set(true);
+  op.then(() => toast(isUnlocked ? '🔒 Apostas fechadas para este jogo' : '🔓 Apostas liberadas!'))
+    .catch(e => toast('Erro: ' + e.message));
+}
 function admKoSet(mid, field, value) {
   if (!admKoPending[mid]) admKoPending[mid] = {};
   admKoPending[mid][field] = value;
@@ -2231,6 +2311,7 @@ function saveAdmKOResult(mid) {
   if (h!==''&&a!=='') merged.score = `${h}-${a}`;
   if (!merged.winner)    { toast('Selecione o vencedor'); return; }
   if (!merged.endingType) merged.endingType = 'normal';
+  if (!merged.date) merged.date = new Date().toISOString().slice(0, 10);
   db.ref(`results/knockout/${mid}`).set(merged)
     .then(() => { delete admKoPending[mid]; toast('✓ Resultado salvo!'); })
     .catch(e => toast('Erro: ' + e.message));
